@@ -7,7 +7,8 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Trash2, Plus, AlertTriangle, AlertCircle, ChevronUp, ChevronDown, Calculator, Calendar } from "lucide-react"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { Trash2, Plus, AlertTriangle, AlertCircle, ChevronUp, ChevronDown, Calculator, Calendar, Info, HelpCircle } from "lucide-react"
 
 interface OtherFee {
   id: string
@@ -16,26 +17,140 @@ interface OtherFee {
 }
 
 export default function PawnshopCalculator() {
-  const [loanAmount, setLoanAmount] = useState<number>(100000)
-  const [monthlyPayment, setMonthlyPayment] = useState<number>(2500) // 每月繳款金額
-  const [totalRepaymentAmount, setTotalRepaymentAmount] = useState<number>(110000) // 累積清償總額
-  const [storageRate, setStorageRate] = useState<number>(5)
-  const [loanYear, setLoanYear] = useState<number>(new Date().getFullYear())
-  const [loanMonth, setLoanMonth] = useState<number>(new Date().getMonth() + 1)
-  const [loanDay, setLoanDay] = useState<number>(new Date().getDate())
-  const [maturityYear, setMaturityYear] = useState<number>(new Date().getFullYear())
-  const [maturityMonth, setMaturityMonth] = useState<number>(new Date().getMonth() + 4) // 預設3個月後
-  const [maturityDay, setMaturityDay] = useState<number>(new Date().getDate())
-  const [loanPeriod, setLoanPeriod] = useState<number>(3)
+  const [loanAmount, setLoanAmount] = useState<string>("")
+  const [monthlyPayment, setMonthlyPayment] = useState<string>("") // 每月繳款金額
+  const [totalRepaymentAmount, setTotalRepaymentAmount] = useState<string>("") // 累積清償總額
+  const [storageRate, setStorageRate] = useState<string>("")
+  const [loanYear, setLoanYear] = useState<number>(0)
+  const [loanMonth, setLoanMonth] = useState<number>(0)
+  const [loanDay, setLoanDay] = useState<number>(0)
+  const [maturityYear, setMaturityYear] = useState<number>(0)
+  const [maturityMonth, setMaturityMonth] = useState<number>(0)
+  const [maturityDay, setMaturityDay] = useState<number>(0)
+  const [loanPeriod, setLoanPeriod] = useState<number>(0)
   const [repaymentMethod, setRepaymentMethod] = useState<string>("lump-sum")
   const [otherFees, setOtherFees] = useState<OtherFee[]>([])
+  const [inputMonthlyRate, setInputMonthlyRate] = useState<string>("") // 手動輸入的月利率
+  const [inputMode, setInputMode] = useState<"amount" | "rate">("amount") // 輸入模式：金額或利率
 
-  // 當還款方式改變時，更新總還款金額
-  useEffect(() => {
-    if (repaymentMethod === "lump-sum") {
-      setTotalRepaymentAmount(Math.round(loanAmount * 1.1)) // 預設為本金 + 10%，四捨五入為整數
+  // 數字輸入處理函數
+  const handleNumberInput = (value: string, setter: (value: string) => void, allowDecimal = false) => {
+    // 允許空字串
+    if (value === "") {
+      setter("")
+      return
     }
-  }, [repaymentMethod, loanAmount])
+    
+    // 移除非數字字符，但保留小數點（如果允許）
+    const cleanValue = allowDecimal ? 
+      value.replace(/[^\d.]/g, '').replace(/(\..*?)\./g, '$1') : 
+      value.replace(/[^\d]/g, '')
+    
+    // 如果是空字串或只有小數點，設為空
+    if (cleanValue === "" || cleanValue === ".") {
+      setter("")
+      return
+    }
+    
+    setter(cleanValue)
+  }
+
+  // 安全的數字轉換函數
+  const safeParseFloat = (value: string): number => {
+    const parsed = parseFloat(value)
+    return isNaN(parsed) ? 0 : parsed
+  }
+
+  // 日期輸入處理函數
+  const handleDateInput = (value: string, setter: (value: number) => void, type: "year" | "month" | "day") => {
+    // 移除非數字字符
+    const cleanValue = value.replace(/[^\d]/g, '')
+    
+    if (cleanValue === "") {
+      setter(0)
+      return
+    }
+
+    let numValue = parseInt(cleanValue)
+    
+    // 根據類型設定限制
+    switch (type) {
+      case "year":
+        // 年份：限制在合理範圍內
+        if (cleanValue.length <= 4) {
+          numValue = Math.max(1900, Math.min(2100, numValue))
+          setter(numValue)
+        }
+        break
+      case "month":
+        // 月份：1-12
+        numValue = Math.max(1, Math.min(12, numValue))
+        setter(numValue)
+        break
+      case "day":
+        // 日期：1-31
+        numValue = Math.max(1, Math.min(31, numValue))
+        setter(numValue)
+        break
+    }
+  }
+
+  // 格式化日期顯示
+  const formatDateValue = (value: number, type: "year" | "month" | "day"): string => {
+    if (value === 0) return ""
+    
+    switch (type) {
+      case "year":
+        return value.toString().padStart(4, "0")
+      case "month":
+      case "day":
+        return value.toString().padStart(2, "0")
+      default:
+        return value.toString()
+    }
+  }
+
+  // 從月利率計算總還款金額
+  const calculateTotalFromRate = (monthlyRatePercent: number) => {
+    const amount = safeParseFloat(loanAmount)
+    if (amount <= 0 || loanPeriod <= 0) return amount
+
+    const monthlyRate = monthlyRatePercent / 100
+    let totalInterest = 0
+
+    switch (repaymentMethod) {
+      case "lump-sum":
+      case "flexible":
+        totalInterest = amount * monthlyRate * loanPeriod
+        break
+      case "interest-only":
+        totalInterest = amount * monthlyRate * loanPeriod
+        break
+      case "amortizing":
+        // 本利攤還：使用PMT公式計算每月付款，再計算總還款
+        if (monthlyRate > 0) {
+          const monthlyPayment = (amount * (monthlyRate * Math.pow(1 + monthlyRate, loanPeriod))) / 
+                                (Math.pow(1 + monthlyRate, loanPeriod) - 1)
+          return Math.round(monthlyPayment * loanPeriod)
+        } else {
+          return amount
+        }
+      default:
+        totalInterest = amount * monthlyRate * loanPeriod
+    }
+
+    return Math.round(amount + totalInterest)
+  }
+
+  // 當還款方式或輸入模式改變時，更新相關欄位
+  useEffect(() => {
+    if (inputMode === "rate" && inputMonthlyRate && loanAmount) {
+      const rate = safeParseFloat(inputMonthlyRate)
+      const calculatedTotal = calculateTotalFromRate(rate)
+      setTotalRepaymentAmount(calculatedTotal.toString())
+    }
+    // 移除自動設定預設值的邏輯，讓使用者手動輸入
+  }, [inputMode, inputMonthlyRate, loanAmount, loanPeriod])
 
   // 自動計算借款期間（當日期改變時）
   useEffect(() => {
@@ -53,7 +168,7 @@ export default function PawnshopCalculator() {
           totalMonths -= 1
         }
 
-        const calculatedPeriod = Math.max(3, totalMonths) // 最短3個月
+        const calculatedPeriod = Math.max(1, totalMonths) // 最短1個月，支援短期借款
         setLoanPeriod(calculatedPeriod)
       }
     }
@@ -79,26 +194,40 @@ export default function PawnshopCalculator() {
   // 調整每月繳款金額的函數
   const adjustMonthlyPayment = (increment: boolean) => {
     const step = 100
-    const newPayment = increment ? monthlyPayment + step : monthlyPayment - step
-    setMonthlyPayment(Math.max(0, newPayment))
+    const currentValue = safeParseFloat(monthlyPayment)
+    const newPayment = increment ? currentValue + step : currentValue - step
+    setMonthlyPayment(Math.max(0, newPayment).toString())
   }
 
   // 調整總還款金額的函數
   const adjustTotalRepayment = (increment: boolean) => {
     const step = 1
-    const newTotal = increment ? totalRepaymentAmount + step : totalRepaymentAmount - step
-    setTotalRepaymentAmount(Math.max(loanAmount, newTotal))
+    const currentValue = safeParseFloat(totalRepaymentAmount)
+    const loanAmountNum = safeParseFloat(loanAmount)
+    const newTotal = increment ? currentValue + step : currentValue - step
+    setTotalRepaymentAmount(Math.max(loanAmountNum, newTotal).toString())
   }
 
   // 調整倉棧費率的函數
   const adjustStorageRate = (increment: boolean) => {
     const step = 0.1
-    const newRate = increment ? storageRate + step : storageRate - step
-    setStorageRate(Math.max(0, Math.round(newRate * 10) / 10))
+    const currentValue = safeParseFloat(storageRate)
+    const newRate = increment ? currentValue + step : currentValue - step
+    setStorageRate(Math.max(0, Math.round(newRate * 10) / 10).toString())
   }
 
   // 計算借款期間的函數（從借款日到今天）
   const calculateLoanPeriodToToday = () => {
+    // 如果借款日期未完整輸入，設定為今天
+    if (!loanYear || !loanMonth || !loanDay) {
+      const today = new Date()
+      setLoanYear(today.getFullYear())
+      setLoanMonth(today.getMonth() + 1)
+      setLoanDay(today.getDate())
+      setLoanPeriod(1)
+      return
+    }
+
     const startDate = new Date(loanYear, loanMonth - 1, loanDay)
     const currentDate = new Date()
 
@@ -121,6 +250,23 @@ export default function PawnshopCalculator() {
 
   // 設定滿當日期為3個月後
   const setMaturityToThreeMonths = () => {
+    // 如果借款日期未完整輸入，先設定為今天
+    if (!loanYear || !loanMonth || !loanDay) {
+      const today = new Date()
+      setLoanYear(today.getFullYear())
+      setLoanMonth(today.getMonth() + 1)
+      setLoanDay(today.getDate())
+      
+      // 設定滿當日期為3個月後
+      const maturityDate = new Date(today)
+      maturityDate.setMonth(maturityDate.getMonth() + 3)
+      setMaturityYear(maturityDate.getFullYear())
+      setMaturityMonth(maturityDate.getMonth() + 1)
+      setMaturityDay(maturityDate.getDate())
+      setLoanPeriod(3)
+      return
+    }
+
     const startDate = new Date(loanYear, loanMonth - 1, loanDay)
     const maturityDate = new Date(startDate)
     maturityDate.setMonth(maturityDate.getMonth() + 3)
@@ -144,36 +290,41 @@ export default function PawnshopCalculator() {
     const diffMonths = diffDays / 30.44 // 平均每月天數
 
     if (diffMonths < 3) {
-      return "滿當期限不得少於3個月"
+      return "法規建議：滿當期限建議至少3個月（支援短期借款試算）"
     }
     return null
   }
 
   // 計算基本費用（即時計算）
-  const storageFee = loanAmount * (storageRate / 100)
+  const loanAmountNum = safeParseFloat(loanAmount)
+  const storageRateNum = safeParseFloat(storageRate)
+  const storageFee = loanAmountNum * (storageRateNum / 100)
   const totalOtherFees = otherFees.reduce((sum, fee) => sum + (fee.amount || 0), 0)
-  const actualReceived = loanAmount - storageFee - totalOtherFees
+  const actualReceived = loanAmountNum - storageFee - totalOtherFees
 
   // 根據還款方式計算總利息（即時計算）
   const calculateTotalInterest = () => {
-    if (loanAmount <= 0 || loanPeriod <= 0) return 0
+    if (loanAmountNum <= 0 || loanPeriod <= 0) return 0
+
+    const monthlyPaymentNum = safeParseFloat(monthlyPayment)
+    const totalRepaymentNum = safeParseFloat(totalRepaymentAmount)
 
     switch (repaymentMethod) {
       case "lump-sum": // 一次清償
         // 總利息 = 總還款金額 - 借款金額
-        return totalRepaymentAmount - loanAmount
+        return totalRepaymentNum - loanAmountNum
 
       case "interest-only": // 只還利息
         // 總利息 = 每月利息 × 借款期間
-        return monthlyPayment * loanPeriod
+        return monthlyPaymentNum * loanPeriod
 
       case "flexible": // 彈性還款
         // 總利息 = 總還款金額 - 借款金額
-        return totalRepaymentAmount - loanAmount
+        return totalRepaymentNum - loanAmountNum
 
       case "amortizing": // 本利攤還
         // 總利息 = (每月繳款 × 期間) - 借款金額
-        return monthlyPayment * loanPeriod - loanAmount
+        return monthlyPaymentNum * loanPeriod - loanAmountNum
 
       default:
         return 0
@@ -182,19 +333,26 @@ export default function PawnshopCalculator() {
 
   // 從總利息反推月利率（即時計算）
   const calculateMonthlyRate = () => {
+    // 如果是利率輸入模式，直接使用輸入的利率
+    if (inputMode === "rate" && inputMonthlyRate) {
+      return safeParseFloat(inputMonthlyRate)
+    }
+
     const totalInterest = calculateTotalInterest()
 
-    if (loanAmount <= 0 || loanPeriod <= 0 || totalInterest <= 0) return 0
+    if (loanAmountNum <= 0 || loanPeriod <= 0 || totalInterest <= 0) return 0
+
+    const monthlyPaymentNum = safeParseFloat(monthlyPayment)
 
     switch (repaymentMethod) {
       case "lump-sum": // 一次清償
       case "flexible": // 彈性還款
         // 月利率 = 總利息 ÷ (借款金額) × 100%
-        return (totalInterest / (loanAmount * loanPeriod)) * 100
+        return (totalInterest / (loanAmountNum * loanPeriod)) * 100
 
       case "interest-only": // 只還利息
         // 月利率 = 每月利息 ÷ 借款金額 × 100%
-        return (monthlyPayment / loanAmount) * 100
+        return (monthlyPaymentNum / loanAmountNum) * 100
 
       case "amortizing": // 本利攤還
         // 使用數值方法求解月利率
@@ -210,17 +368,18 @@ export default function PawnshopCalculator() {
     let rate = 0.01 // 初始猜測值 1%
     const tolerance = 0.0001
     const maxIterations = 1000
+    const monthlyPaymentNum = safeParseFloat(monthlyPayment)
 
     for (let i = 0; i < maxIterations; i++) {
       const calculatedPayment =
-        (loanAmount * (rate * Math.pow(1 + rate, loanPeriod))) / (Math.pow(1 + rate, loanPeriod) - 1)
+        (loanAmountNum * (rate * Math.pow(1 + rate, loanPeriod))) / (Math.pow(1 + rate, loanPeriod) - 1)
 
-      if (Math.abs(calculatedPayment - monthlyPayment) < tolerance) {
+      if (Math.abs(calculatedPayment - monthlyPaymentNum) < tolerance) {
         return rate * 100 // 轉換為百分比
       }
 
       // 調整利率
-      if (calculatedPayment > monthlyPayment) {
+      if (calculatedPayment > monthlyPaymentNum) {
         rate *= 0.99
       } else {
         rate *= 1.01
@@ -236,7 +395,7 @@ export default function PawnshopCalculator() {
   const totalInterest = calculateTotalInterest()
   const monthlyRate = calculateMonthlyRate()
   const totalExpense = totalInterest + storageFee + totalOtherFees
-  const totalRepayment = loanAmount + totalExpense
+  const totalRepayment = loanAmountNum + totalExpense
 
   // APR計算（即時計算）
   const totalCost = totalInterest + storageFee + totalOtherFees
@@ -253,34 +412,34 @@ export default function PawnshopCalculator() {
       case "lump-sum":
         return [
           `1. 還款方式：一次清償`,
-          `2. 總還款金額 = ${formatNum(totalRepaymentAmount)}`,
-          `3. 借款金額 = ${formatNum(loanAmount)}`,
-          `4. 總利息 = ${formatNum(totalRepaymentAmount)} - ${formatNum(loanAmount)} = ${formatNum(totalInterest)}`,
-          `5. 月利率 = ${formatNum(totalInterest)} ÷ (${formatNum(loanAmount)} × ${loanPeriod}) × 100% = ${formatPercent(monthlyRate)}%`,
+          `2. 總還款金額 = ${formatNum(safeParseFloat(totalRepaymentAmount))}`,
+          `3. 借款金額 = ${formatNum(loanAmountNum)}`,
+          `4. 總利息 = ${formatNum(safeParseFloat(totalRepaymentAmount))} - ${formatNum(loanAmountNum)} = ${formatNum(totalInterest)}`,
+          `5. 月利率 = ${formatNum(totalInterest)} ÷ (${formatNum(loanAmountNum)} × ${loanPeriod}) × 100% = ${formatPercent(monthlyRate)}%`,
         ]
       case "interest-only":
         return [
           `1. 還款方式：只還利息`,
-          `2. 每月利息 = ${formatNum(monthlyPayment)}`,
+          `2. 每月利息 = ${formatNum(safeParseFloat(monthlyPayment))}`,
           `3. 借款期間 = ${loanPeriod} 個月`,
-          `4. 總利息 = ${formatNum(monthlyPayment)} × ${loanPeriod} = ${formatNum(totalInterest)}`,
-          `5. 月利率 = ${formatNum(monthlyPayment)} ÷ ${formatNum(loanAmount)} × 100% = ${formatPercent(monthlyRate)}%`,
+          `4. 總利息 = ${formatNum(safeParseFloat(monthlyPayment))} × ${loanPeriod} = ${formatNum(totalInterest)}`,
+          `5. 月利率 = ${formatNum(safeParseFloat(monthlyPayment))} ÷ ${formatNum(loanAmountNum)} × 100% = ${formatPercent(monthlyRate)}%`,
         ]
       case "flexible":
         return [
           `1. 還款方式：彈性還款`,
-          `2. 累積清償總額 = ${formatNum(totalRepaymentAmount)}`,
-          `3. 借款金額 = ${formatNum(loanAmount)}`,
-          `4. 總利息 = ${formatNum(totalRepaymentAmount)} - ${formatNum(loanAmount)} = ${formatNum(totalInterest)}`,
-          `5. 月利率 = ${formatNum(totalInterest)} ÷ (${formatNum(loanAmount)} × ${loanPeriod}) × 100% = ${formatPercent(monthlyRate)}%`,
+          `2. 累積清償總額 = ${formatNum(safeParseFloat(totalRepaymentAmount))}`,
+          `3. 借款金額 = ${formatNum(loanAmountNum)}`,
+          `4. 總利息 = ${formatNum(safeParseFloat(totalRepaymentAmount))} - ${formatNum(loanAmountNum)} = ${formatNum(totalInterest)}`,
+          `5. 月利率 = ${formatNum(totalInterest)} ÷ (${formatNum(loanAmountNum)} × ${loanPeriod}) × 100% = ${formatPercent(monthlyRate)}%`,
         ]
       case "amortizing":
         return [
           `1. 還款方式：本利攤還`,
-          `2. 每月繳款 = ${formatNum(monthlyPayment)}`,
+          `2. 每月繳款 = ${formatNum(safeParseFloat(monthlyPayment))}`,
           `3. 借款期間 = ${loanPeriod} 個月`,
-          `4. 總還款 = ${formatNum(monthlyPayment)} × ${loanPeriod} = ${formatNum(monthlyPayment * loanPeriod)}`,
-          `5. 總利息 = ${formatNum(monthlyPayment * loanPeriod)} - ${formatNum(loanAmount)} = ${formatNum(totalInterest)}`,
+          `4. 總還款 = ${formatNum(safeParseFloat(monthlyPayment))} × ${loanPeriod} = ${formatNum(safeParseFloat(monthlyPayment) * loanPeriod)}`,
+          `5. 總利息 = ${formatNum(safeParseFloat(monthlyPayment) * loanPeriod)} - ${formatNum(loanAmountNum)} = ${formatNum(totalInterest)}`,
           `6. 使用數值方法計算月利率 = ${formatPercent(monthlyRate)}%`,
         ]
       default:
@@ -296,7 +455,7 @@ export default function PawnshopCalculator() {
     return [
       `1. 總成本 = 總利息 + 倉棧費 + 其他費用`,
       `2. 總成本 = ${formatNum(totalInterest)} + ${formatNum(storageFee)} + ${formatNum(totalOtherFees)} = ${formatNum(totalCost)}`,
-      `3. 實拿金額 = ${formatNum(loanAmount)} - ${formatNum(storageFee)} - ${formatNum(totalOtherFees)} = ${formatNum(actualReceived)}`,
+      `3. 實拿金額 = ${formatNum(loanAmountNum)} - ${formatNum(storageFee)} - ${formatNum(totalOtherFees)} = ${formatNum(actualReceived)}`,
       `4. 借款年期 = ${loanPeriod} ÷ 12 = ${formatPercent(loanYears)} 年`,
       `5. 平均年成本 = ${formatNum(totalCost)} ÷ ${formatPercent(loanYears)} = ${formatNum(averageAnnualCost)}`,
       `6. APR = (${formatNum(averageAnnualCost)} ÷ ${formatNum(actualReceived)}) × 100% = ${formatPercent(apr)}%`,
@@ -324,11 +483,13 @@ export default function PawnshopCalculator() {
   const maturityWarning = checkMaturityPeriod()
 
   // 根據還款方式決定顯示哪個輸入欄位
-  const showMonthlyPayment = repaymentMethod === "interest-only" || repaymentMethod === "amortizing"
-  const showTotalRepayment = repaymentMethod === "lump-sum" || repaymentMethod === "flexible"
+  const showMonthlyPayment = (repaymentMethod === "interest-only" || repaymentMethod === "amortizing") && inputMode === "amount"
+  const showTotalRepayment = (repaymentMethod === "lump-sum" || repaymentMethod === "flexible") && inputMode === "amount"
+  const showMonthlyRateInput = inputMode === "rate"
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 p-4">
+    <TooltipProvider>
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 p-4">
       <div className="max-w-4xl mx-auto space-y-6">
         <div className="text-center py-8">
           <h1 className="text-4xl font-bold text-gray-800 mb-2">當鋪利息試算器</h1>
@@ -348,12 +509,85 @@ export default function PawnshopCalculator() {
                   <Label htmlFor="loanAmount">借款金額 (NT$)</Label>
                   <Input
                     id="loanAmount"
-                    type="number"
+                    type="text"
                     value={loanAmount}
-                    onChange={(e) => setLoanAmount(Number(e.target.value))}
+                    onChange={(e) => handleNumberInput(e.target.value, setLoanAmount)}
                     className="text-lg"
+                    placeholder="請輸入借款金額"
                   />
                 </div>
+
+                {/* 輸入模式選擇 */}
+                <div>
+                  <div className="flex items-center gap-2 mb-3">
+                    <Label>輸入方式</Label>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <HelpCircle className="h-4 w-4 text-gray-400 cursor-help" />
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <div className="max-w-xs space-y-2">
+                          <p><strong>金額輸入：</strong>輸入還款金額，系統自動計算月利率</p>
+                          <p><strong>利率輸入：</strong>輸入月利率，系統自動計算還款金額</p>
+                        </div>
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      variant={inputMode === "amount" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setInputMode("amount")}
+                      className="flex-1"
+                    >
+                      金額輸入
+                    </Button>
+                    <Button
+                      variant={inputMode === "rate" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setInputMode("rate")}
+                      className="flex-1"
+                    >
+                      利率輸入
+                    </Button>
+                  </div>
+                </div>
+
+                {/* 根據輸入模式顯示月利率輸入欄位 */}
+                {showMonthlyRateInput && (
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <Label htmlFor="inputMonthlyRate">月利率 (%)</Label>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Info className="h-4 w-4 text-blue-400 cursor-help" />
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <div className="max-w-xs space-y-2">
+                            <p>輸入月利率後，系統會自動計算對應的還款金額。</p>
+                            <p className="text-red-600 font-semibold">⚠️ 法定上限為2.5%</p>
+                          </div>
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
+                    <Input
+                      id="inputMonthlyRate"
+                      type="text"
+                      value={inputMonthlyRate}
+                      onChange={(e) => handleNumberInput(e.target.value, setInputMonthlyRate, true)}
+                      className="text-lg"
+                      placeholder="輸入月利率"
+                    />
+                    {safeParseFloat(inputMonthlyRate) > 2.5 && (
+                      <Alert className="mt-2 border-red-400 bg-red-50">
+                        <AlertTriangle className="h-4 w-4 text-red-600" />
+                        <AlertDescription className="text-red-800 font-semibold">
+                          輸入的月利率 {safeParseFloat(inputMonthlyRate).toFixed(2)}% 超過法定上限2.5%
+                        </AlertDescription>
+                      </Alert>
+                    )}
+                  </div>
+                )}
 
                 {/* 根據還款方式顯示不同的輸入欄位 */}
                 {showMonthlyPayment && (
@@ -362,12 +596,11 @@ export default function PawnshopCalculator() {
                     <div className="flex">
                       <Input
                         id="monthlyPayment"
-                        type="number"
-                        step="100"
-                        min="0"
+                        type="text"
                         value={monthlyPayment}
-                        onChange={(e) => setMonthlyPayment(Number(e.target.value))}
+                        onChange={(e) => handleNumberInput(e.target.value, setMonthlyPayment)}
                         className="rounded-r-none"
+                        placeholder="每月繳款金額"
                       />
                       <div className="flex flex-col border border-l-0 rounded-r-md">
                         <Button
@@ -397,11 +630,11 @@ export default function PawnshopCalculator() {
                     <div className="flex">
                       <Input
                         id="totalRepaymentAmount"
-                        type="number"
-                        min={loanAmount}
+                        type="text"
                         value={totalRepaymentAmount}
-                        onChange={(e) => setTotalRepaymentAmount(Number(e.target.value))}
+                        onChange={(e) => handleNumberInput(e.target.value, setTotalRepaymentAmount)}
                         className="rounded-r-none"
+                        placeholder="累積清償總額"
                       />
                       <div className="flex flex-col border border-l-0 rounded-r-md">
                         <Button
@@ -426,16 +659,25 @@ export default function PawnshopCalculator() {
                 )}
 
                 <div>
-                  <Label htmlFor="storageRate">倉棧費率 (%)</Label>
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="storageRate">倉棧費率 (%)</Label>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <HelpCircle className="h-4 w-4 text-gray-400 cursor-help" />
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p className="max-w-xs">倉棧費是典當物保管費用，由當鋪收取用於保管典當品。法定上限為收當金額的5%，通常在放款時一次性扣除。</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
                   <div className="flex">
                     <Input
                       id="storageRate"
-                      type="number"
-                      step="0.1"
-                      min="0"
+                      type="text"
                       value={storageRate}
-                      onChange={(e) => setStorageRate(Number(e.target.value))}
+                      onChange={(e) => handleNumberInput(e.target.value, setStorageRate, true)}
                       className="rounded-r-none"
+                      placeholder="倉棧費率"
                     />
                     <div className="flex flex-col border border-l-0 rounded-r-md">
                       <Button
@@ -456,10 +698,12 @@ export default function PawnshopCalculator() {
                       </Button>
                     </div>
                   </div>
-                  {storageRate > 5 && (
-                    <Alert className="mt-2 border-yellow-400 bg-yellow-50">
-                      <AlertTriangle className="h-4 w-4 text-yellow-600" />
-                      <AlertDescription className="text-yellow-800">倉棧費率超過法定上限5%</AlertDescription>
+                  {safeParseFloat(storageRate) > 5 && (
+                    <Alert className="mt-2 border-red-500 bg-red-50 border-2">
+                      <AlertTriangle className="h-5 w-5 text-red-600" />
+                      <AlertDescription className="text-red-800 font-bold">
+                        ⚠️ 違法警告：倉棧費率 <span className="text-xl font-black text-red-900">{safeParseFloat(storageRate).toFixed(1)}%</span> 超過法定上限5%
+                      </AlertDescription>
                     </Alert>
                   )}
                 </div>
@@ -468,26 +712,25 @@ export default function PawnshopCalculator() {
                   <Label>借款日期</Label>
                   <div className="grid grid-cols-3 gap-2 mb-2">
                     <Input
-                      type="number"
-                      placeholder="年"
-                      value={loanYear}
-                      onChange={(e) => setLoanYear(Number(e.target.value))}
+                      type="text"
+                      placeholder="YYYY"
+                      value={formatDateValue(loanYear, "year")}
+                      onChange={(e) => handleDateInput(e.target.value, setLoanYear, "year")}
+                      maxLength={4}
                     />
                     <Input
-                      type="number"
-                      placeholder="月"
-                      min="1"
-                      max="12"
-                      value={loanMonth}
-                      onChange={(e) => setLoanMonth(Number(e.target.value))}
+                      type="text"
+                      placeholder="MM"
+                      value={formatDateValue(loanMonth, "month")}
+                      onChange={(e) => handleDateInput(e.target.value, setLoanMonth, "month")}
+                      maxLength={2}
                     />
                     <Input
-                      type="number"
-                      placeholder="日"
-                      min="1"
-                      max="31"
-                      value={loanDay}
-                      onChange={(e) => setLoanDay(Number(e.target.value))}
+                      type="text"
+                      placeholder="DD"
+                      value={formatDateValue(loanDay, "day")}
+                      onChange={(e) => handleDateInput(e.target.value, setLoanDay, "day")}
+                      maxLength={2}
                     />
                   </div>
                   <Button variant="outline" size="sm" onClick={calculateLoanPeriodToToday} className="w-full">
@@ -500,26 +743,25 @@ export default function PawnshopCalculator() {
                   <Label>滿當日期</Label>
                   <div className="grid grid-cols-3 gap-2 mb-2">
                     <Input
-                      type="number"
-                      placeholder="年"
-                      value={maturityYear}
-                      onChange={(e) => setMaturityYear(Number(e.target.value))}
+                      type="text"
+                      placeholder="YYYY"
+                      value={formatDateValue(maturityYear, "year")}
+                      onChange={(e) => handleDateInput(e.target.value, setMaturityYear, "year")}
+                      maxLength={4}
                     />
                     <Input
-                      type="number"
-                      placeholder="月"
-                      min="1"
-                      max="12"
-                      value={maturityMonth}
-                      onChange={(e) => setMaturityMonth(Number(e.target.value))}
+                      type="text"
+                      placeholder="MM"
+                      value={formatDateValue(maturityMonth, "month")}
+                      onChange={(e) => handleDateInput(e.target.value, setMaturityMonth, "month")}
+                      maxLength={2}
                     />
                     <Input
-                      type="number"
-                      placeholder="日"
-                      min="1"
-                      max="31"
-                      value={maturityDay}
-                      onChange={(e) => setMaturityDay(Number(e.target.value))}
+                      type="text"
+                      placeholder="DD"
+                      value={formatDateValue(maturityDay, "day")}
+                      onChange={(e) => handleDateInput(e.target.value, setMaturityDay, "day")}
+                      maxLength={2}
                     />
                   </div>
                   <Button variant="outline" size="sm" onClick={setMaturityToThreeMonths} className="w-full">
@@ -541,10 +783,12 @@ export default function PawnshopCalculator() {
                     id="loanPeriod"
                     type="number"
                     min="1"
-                    value={loanPeriod}
-                    onChange={(e) => setLoanPeriod(Number(e.target.value))}
+                    step="1"
+                    value={loanPeriod || ""}
+                    onChange={(e) => setLoanPeriod(Number(e.target.value) || 0)}
+                    placeholder="請輸入借款期間"
                   />
-                  <p className="text-xs text-gray-500 mt-1">期間會根據借款日期和滿當日期自動計算</p>
+                  <p className="text-xs text-gray-500 mt-1">支援短期借款（最短1個月），期間會根據借款日期和滿當日期自動計算</p>
                 </div>
               </CardContent>
             </Card>
@@ -554,7 +798,22 @@ export default function PawnshopCalculator() {
               {/* 還款方式 */}
               <Card className="shadow-lg">
                 <CardHeader>
-                  <CardTitle className="text-xl text-gray-800">還款方式</CardTitle>
+                  <div className="flex items-center gap-2">
+                    <CardTitle className="text-xl text-gray-800">還款方式</CardTitle>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Info className="h-4 w-4 text-gray-400 cursor-help" />
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <div className="max-w-xs space-y-2">
+                          <p><strong>一次清償：</strong>到期一次還清本金和利息</p>
+                          <p><strong>只還利息：</strong>每月只還利息，到期還本金</p>
+                          <p><strong>彈性還款：</strong>可彈性安排還款，輸入累積清償總額</p>
+                          <p><strong>本利攤還：</strong>每月攤還本金和利息</p>
+                        </div>
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
                 </CardHeader>
                 <CardContent>
                   <Select value={repaymentMethod} onValueChange={setRepaymentMethod}>
@@ -580,7 +839,22 @@ export default function PawnshopCalculator() {
               {/* 其他費用 */}
               <Card className="shadow-lg">
                 <CardHeader>
-                  <CardTitle className="text-xl text-gray-800">其他費用</CardTitle>
+                  <div className="flex items-center gap-2">
+                    <CardTitle className="text-xl text-gray-800">其他費用</CardTitle>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <AlertTriangle className="h-4 w-4 text-amber-500 cursor-help" />
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <div className="max-w-xs space-y-2">
+                          <p className="text-red-600 font-semibold">⚠️ 違法風險警告</p>
+                          <p>根據當鋪業法，合法當鋪僅能收取<strong>利息</strong>及<strong>倉棧費</strong>。</p>
+                          <p>收取其他費用（如手續費、服務費、鑑定費等）可能違反法規。</p>
+                          <p>此功能僅供試算參考，請謹慎選擇合法當鋪業者。</p>
+                        </div>
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   {otherFees.map((fee) => (
@@ -615,10 +889,14 @@ export default function PawnshopCalculator() {
                   </Button>
 
                   {otherFees.length > 0 && totalOtherFees > 0 && (
-                    <Alert className="border-red-400 bg-red-50">
-                      <AlertCircle className="h-4 w-4 text-red-600" />
-                      <AlertDescription className="text-red-800">
-                        <strong>違法風險警告：</strong>合法當鋪僅能收取利息及倉棧費，收取其他費用可能違反當鋪業法規定。
+                    <Alert className="border-red-500 bg-red-50 border-2">
+                      <AlertCircle className="h-6 w-6 text-red-600" />
+                      <AlertDescription className="text-red-800 font-bold text-base">
+                        <div className="space-y-2">
+                          <div className="text-xl font-black text-red-900">⚠️ 嚴重違法風險警告</div>
+                          <div>合法當鋪僅能收取<strong>利息</strong>及<strong>倉棧費</strong>，收取其他費用可能違反當鋪業法規定。</div>
+                          <div className="text-red-900 font-black">其他費用總額：{formatCurrency(totalOtherFees)}</div>
+                        </div>
                       </AlertDescription>
                     </Alert>
                   )}
@@ -636,7 +914,7 @@ export default function PawnshopCalculator() {
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                 <div className="flex justify-between">
                   <span className="text-gray-600">借款本金：</span>
-                  <span className="font-medium">{formatCurrency(loanAmount)}</span>
+                  <span className="font-medium">{formatCurrency(loanAmountNum)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-600">倉棧費：</span>
@@ -644,7 +922,10 @@ export default function PawnshopCalculator() {
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-600">計算月利率：</span>
-                  <span className="font-medium text-blue-600">{formatPercentage(monthlyRate)}</span>
+                  <span className={`font-medium ${monthlyRate > 2.5 ? 'text-red-700 font-black text-lg' : 'text-blue-600'}`}>
+                    {formatPercentage(monthlyRate)}
+                    {monthlyRate > 2.5 && <span className="ml-1 text-red-600">⚠️</span>}
+                  </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-600">借款期間：</span>
@@ -677,10 +958,10 @@ export default function PawnshopCalculator() {
               </div>
 
               {monthlyRate > 2.5 && (
-                <Alert className="border-yellow-400 bg-yellow-50">
-                  <AlertTriangle className="h-4 w-4 text-yellow-600" />
-                  <AlertDescription className="text-yellow-800">
-                    計算出的月利率 {formatPercentage(monthlyRate)} 超過法定上限2.5%
+                <Alert className="border-red-500 bg-red-50 border-2">
+                  <AlertTriangle className="h-6 w-6 text-red-600" />
+                  <AlertDescription className="text-red-800 font-bold text-lg">
+                    ⚠️ 違法警告：計算出的月利率 <span className="text-2xl font-black text-red-900">{formatPercentage(monthlyRate)}</span> 超過法定上限2.5%
                   </AlertDescription>
                 </Alert>
               )}
@@ -727,7 +1008,25 @@ export default function PawnshopCalculator() {
               <div className="border-t pt-4">
                 <div className="flex justify-center">
                   <div className="text-center">
-                    <div className="text-xl font-bold text-blue-700">APR年百分率：{apr.toFixed(2)}%</div>
+                    <div className="flex items-center justify-center gap-2">
+                      <div className="text-xl font-bold text-blue-700">APR年百分率：{apr.toFixed(2)}%</div>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Info className="h-5 w-5 text-blue-500 cursor-help" />
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <div className="max-w-xs space-y-2">
+                            <p><strong>APR年百分率</strong>是年度總成本率，包含所有借款成本：</p>
+                            <ul className="list-disc list-inside space-y-1 text-sm">
+                              <li>利息支出</li>
+                              <li>倉棧費用</li>
+                              <li>其他相關費用</li>
+                            </ul>
+                            <p className="text-sm">APR提供真實的借款成本參考，方便比較不同方案。</p>
+                          </div>
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -744,7 +1043,7 @@ export default function PawnshopCalculator() {
                 <p>• 根據當鋪業法規定，當鋪月利率不得超過2.5%</p>
                 <p>• 倉棧費不得超過收當金額5%</p>
                 <p>• 合法當鋪僅能收取利息及倉棧費，不得收取其他費用</p>
-                <p>• 滿當期限最短3個月，到期後5天內仍可取回並付清利息</p>
+                <p>• 法規建議滿當期限至少3個月，本試算器支援短期借款試算</p>
                 <p>• 如未在期限內取回，物品所有權將歸當鋪業者</p>
                 <p>• APR年百分率包含所有借款成本，提供真實借款成本參考</p>
                 <p>• 本計算器根據還款方式反推計算月利率</p>
@@ -754,5 +1053,6 @@ export default function PawnshopCalculator() {
         </div>
       </div>
     </div>
+    </TooltipProvider>
   )
 }
